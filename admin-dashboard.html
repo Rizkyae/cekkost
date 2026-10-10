@@ -48,9 +48,16 @@
             <label class="admin-field"><span>Harga per bulan (Rp)</span><input name="harga" type="number" min="1" step="1000" required placeholder="1250000"></label>
             <label class="admin-field"><span>Tipe kost</span><select name="tipe" required><option value="Putra">Putra</option><option value="Putri">Putri</option><option value="Eksklusif">Eksklusif</option><option value="Campur">Campur</option></select></label>
             <label class="admin-field form-span-2"><span>Lokasi singkat</span><input name="lokasi_singkat" required maxlength="180" placeholder="Seturan, dekat kampus, Yogyakarta"></label>
-            <label class="admin-field form-span-2"><span>Path gambar utama</span><input name="gambar_utama" required placeholder="assets/images/kos-1.jpg"><small>Gunakan path lokal, URL gambar, atau data URL gambar.</small></label>
-            <label class="admin-field form-span-2"><span>Galeri foto</span><textarea name="galeri_foto" rows="2" placeholder="assets/images/kos-1.jpg, assets/images/kos-2.jpg"></textarea><small>Pisahkan setiap path/URL gambar dengan koma. Kosongkan untuk memakai gambar utama saja.</small></label>
           </div>
+          <section class="admin-image-manager" aria-labelledby="image-manager-title">
+            <div class="image-manager-heading"><div><span id="image-manager-title">Foto kost</span><small>Pilih foto dari perangkat. Klik foto untuk menjadikannya sampul.</small></div></div>
+            <label class="image-upload-button" for="gallery-upload"><span aria-hidden="true">＋</span> Pilih foto kost<input id="gallery-upload" type="file" accept="image/*" multiple></label>
+            <p class="image-upload-help">Format gambar umum didukung. Foto yang sama tidak akan ditambahkan dua kali.</p>
+            <input type="hidden" name="gambar_utama">
+            <input type="hidden" name="galeri_foto">
+            <div id="image-gallery" class="admin-image-gallery" aria-live="polite"></div>
+            <p id="image-gallery-empty" class="image-gallery-empty">Belum ada foto. Pilih satu atau beberapa gambar untuk memulai.</p>
+          </section>
           <fieldset class="facility-fieldset"><legend>Fasilitas</legend><div class="admin-checkbox-grid">
             <label><input type="checkbox" name="fasilitas" value="AC"><span>AC</span></label>
             <label><input type="checkbox" name="fasilitas" value="Wi-Fi cepat"><span>Wi-Fi cepat</span></label>
