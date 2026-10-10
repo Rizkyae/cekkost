@@ -1,12 +1,12 @@
 (() => {
   'use strict';
 
-  const ADMIN_USERNAME = 'admin';
-  const ADMIN_PASSWORD = 'cekkost123';
-  const SESSION_KEY = 'cekkos_admin_session_v1';
-  const STORAGE_KEY = 'cekkos_kos_data_v1';
-  const DATA_URL = 'data/kos.json';
+  const API_URL = 'api/kos.php';
+  const UPLOAD_URL = 'api/upload.php';
+  const LEGACY_STORAGE_KEY = 'cekkos_kos_data_v1';
   const DEFAULT_IMAGE = 'assets/images/kos-1.jpg';
+  let csrfToken = '';
+
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
@@ -16,74 +16,55 @@
   }).format(Number(price) || 0);
 
   function normalizeListing(item) {
-    const mainImage = String(item.gambar_utama || DEFAULT_IMAGE);
+    const mainImage = String(item.gambar_utama || item.mainImage || DEFAULT_IMAGE);
+    const gallery = Array.isArray(item.galeri_foto)
+      ? item.galeri_foto
+      : Array.isArray(item.images) ? item.images : [];
     return {
       id: String(item.id ?? ''),
-      nama_kos: String(item.nama_kos || ''),
-      tipe: String(item.tipe || 'Campur'),
-      harga: Number(item.harga) || 0,
-      lokasi_singkat: String(item.lokasi_singkat || ''),
+      nama_kos: String(item.nama_kos || item.name || ''),
+      tipe: String(item.tipe || item.type || 'Campur'),
+      harga: Number(item.harga ?? item.price) || 0,
+      lokasi_singkat: String(item.lokasi_singkat || item.location || ''),
       gambar_utama: mainImage,
-      galeri_foto: Array.isArray(item.galeri_foto) && item.galeri_foto.length
-        ? item.galeri_foto.map(String)
-        : [mainImage],
-      fasilitas: Array.isArray(item.fasilitas) ? item.fasilitas.map(String) : [],
-      deskripsi: String(item.deskripsi || ''),
+      galeri_foto: [...new Set([mainImage, ...gallery.map(String)].filter(Boolean))],
+      fasilitas: Array.isArray(item.fasilitas) ? item.fasilitas.map(String) : Array.isArray(item.facilities) ? item.facilities.map(String) : [],
+      deskripsi: String(item.deskripsi || item.description || ''),
       gmaps_url: String(item.gmaps_url || ''),
-      wa_number: String(item.wa_number || '')
+      wa_number: String(item.wa_number || '6281234567890')
     };
   }
 
-  function compressImage(file) {
-    return new Promise((resolve, reject) => {
-      if (!file.type.startsWith('image/')) {
-        reject(new Error(`${file.name} bukan file gambar.`));
-        return;
-      }
-      if (file.size > 15 * 1024 * 1024) {
-        reject(new Error(`${file.name} lebih besar dari batas 15 MB.`));
-        return;
-      }
-
-      const objectUrl = URL.createObjectURL(file);
-      const image = new Image();
-      image.onload = () => {
-        URL.revokeObjectURL(objectUrl);
-        const maxDimension = 1440;
-        const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-        const context = canvas.getContext('2d');
-        if (!context) {
-          reject(new Error(`Browser tidak dapat memproses ${file.name}.`));
-          return;
-        }
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-          if (!blob) {
-            reject(new Error(`Gagal mengolah ${file.name}.`));
-            return;
-          }
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = () => reject(new Error(`Gagal membaca hasil gambar ${file.name}.`));
-          reader.readAsDataURL(blob);
-        }, 'image/jpeg', 0.78);
-      };
-      image.onerror = () => {
-        URL.revokeObjectURL(objectUrl);
-        reject(new Error(`${file.name} tidak dapat dibuka sebagai gambar.`));
-      };
-      image.src = objectUrl;
-    });
+  async function apiRequest(action, data, method = 'POST') {
+    const options = {
+      method,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {}
+    };
+    if (method !== 'GET') {
+      options.headers['Content-Type'] = 'application/json';
+      options.body = JSON.stringify({ action, ...data, csrf_token: csrfToken });
+    }
+    const response = await fetch(method === 'GET' ? `${API_URL}?action=${encodeURIComponent(action)}` : API_URL, options);
+    const result = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(result && result.error ? result.error : `Permintaan ke server gagal (HTTP ${response.status}).`);
+    return result;
   }
 
-  function safeImagePath(path) {
-    const value = String(path || '').trim();
-    if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value)) return value;
-    if (/^(?:https?:\/\/|\/|\.\/|assets\/images\/)[^\s"'<>]+$/i.test(value)) return value;
-    return DEFAULT_IMAGE;
+  async function uploadImage(file) {
+    const body = new FormData();
+    body.append('image', file);
+    const response = await fetch(UPLOAD_URL, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-CekKos-CSRF': csrfToken },
+      body
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(result && result.error ? result.error : `Upload gambar gagal (HTTP ${response.status}).`);
+    if (!result || typeof result.path !== 'string') throw new Error('Server tidak mengembalikan path foto.');
+    return result.path;
   }
 
   function showNotice(message, kind) {
@@ -95,76 +76,39 @@
     notice.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
-  async function readInitialData() {
-    const savedData = localStorage.getItem(STORAGE_KEY);
-    if (savedData !== null) {
-      const parsed = JSON.parse(savedData);
-      if (!Array.isArray(parsed)) throw new Error('Data kost di localStorage bukan array JSON.');
-      return { listings: parsed.map(normalizeListing), source: 'Perubahan browser (localStorage)' };
-    }
-
-    const response = await fetch(DATA_URL, { cache: 'no-store' });
-    if (!response.ok) throw new Error(`Tidak dapat membaca ${DATA_URL} (HTTP ${response.status}).`);
-    const parsed = await response.json();
-    if (!Array.isArray(parsed)) throw new Error('Format data/kos.json harus berupa array JSON.');
-    return { listings: parsed.map(normalizeListing), source: 'Database awal (data/kos.json)' };
-  }
-
   function setupLogin() {
     const form = document.getElementById('admin-login-form');
     if (!form) return;
 
-    try {
-      if (localStorage.getItem(SESSION_KEY)) {
-        window.location.replace('admin-dashboard.html');
-        return;
-      }
-    } catch (error) {
-      console.error('Tidak dapat memeriksa sesi admin:', error);
-    }
-
-    form.addEventListener('submit', (event) => {
+    form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const formData = new FormData(form);
-      const username = String(formData.get('username') || '').trim();
-      const password = String(formData.get('password') || '');
+      const submitButton = form.querySelector('button[type="submit"]');
       const message = document.getElementById('login-message');
-
-      if (username !== ADMIN_USERNAME || password !== ADMIN_PASSWORD) {
-        message.textContent = 'Username atau password salah. Silakan coba lagi.';
-        message.className = 'form-message is-error';
-        window.alert('Login gagal. Username atau password salah.');
-        return;
-      }
+      const values = new FormData(form);
+      submitButton.disabled = true;
+      message.textContent = '';
 
       try {
-        const token = window.crypto && window.crypto.randomUUID
-          ? window.crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        localStorage.setItem(SESSION_KEY, JSON.stringify({ token, createdAt: Date.now() }));
+        const result = await apiRequest('login', {
+          username: String(values.get('username') || '').trim(),
+          password: String(values.get('password') || '')
+        });
+        csrfToken = result.csrf_token;
         window.location.assign('admin-dashboard.html');
       } catch (error) {
-        console.error('Gagal menyimpan sesi admin:', error);
-        message.textContent = 'Sesi tidak dapat disimpan. Pastikan penyimpanan browser diaktifkan.';
+        console.error('Login admin gagal:', error);
+        message.textContent = error.message;
         message.className = 'form-message is-error';
+        window.alert(error.message);
+      } finally {
+        submitButton.disabled = false;
       }
     });
   }
 
-  function setupDashboard() {
+  async function setupDashboard() {
     const dashboard = document.querySelector('[data-admin-dashboard]');
     if (!dashboard) return;
-
-    let hasSession = false;
-    try {
-      hasSession = Boolean(localStorage.getItem(SESSION_KEY));
-    } catch (error) {
-      console.error('Tidak dapat memeriksa sesi admin:', error);
-    }
-    if (!hasSession) {
-      window.location.replace('admin-login.html');
-      return;
-    }
 
     const form = document.getElementById('kost-form');
     const list = document.getElementById('admin-kost-list');
@@ -172,15 +116,53 @@
     const editorTitle = document.getElementById('editor-title');
     const sourceLabel = document.getElementById('admin-data-source');
     const emptyState = document.getElementById('admin-empty');
-    const cancelEdit = document.getElementById('cancel-edit');
-    const cancelForm = document.getElementById('cancel-form');
     const galleryUpload = document.getElementById('gallery-upload');
     const galleryPreview = document.getElementById('image-gallery');
     const galleryEmpty = document.getElementById('image-gallery-empty');
+    const importButton = document.getElementById('import-local-data');
     let listings = [];
-    let currentSource = '';
     let galleryImages = [];
     let selectedMainImage = '';
+
+    try {
+      const session = await apiRequest('session', null, 'GET');
+      if (!session.authenticated) {
+        window.location.replace('admin-login.html');
+        return;
+      }
+      csrfToken = session.csrf_token;
+
+      const dataResponse = await fetch(API_URL, { credentials: 'same-origin', cache: 'no-store' });
+      const data = await dataResponse.json().catch(() => null);
+      if (!dataResponse.ok || !Array.isArray(data)) {
+        throw new Error(data && data.error ? data.error : 'Data kost dari server tidak valid.');
+      }
+      listings = data.map(normalizeListing);
+      sourceLabel.textContent = 'Sumber aktif: database JSON di server. Perubahan tersinkron untuk semua perangkat.';
+      renderListings();
+      checkLegacyData();
+    } catch (error) {
+      console.error('Gagal menyiapkan dashboard admin:', error);
+      showNotice(`Dashboard gagal memuat data dari server. Pastikan PHP aktif, sesi login valid, dan data/kos.json dapat dibaca. ${error.message}`, 'error');
+      sourceLabel.textContent = 'Server/API tidak dapat diakses.';
+      emptyState.hidden = false;
+      list.closest('table').hidden = true;
+      if (/401|sesi admin/i.test(error.message)) window.location.replace('admin-login.html');
+      return;
+    }
+
+    function renderListings() {
+      list.innerHTML = listings.map((item) => `
+        <tr>
+          <td><div class="admin-kost-name"><img src="${escapeHtml(item.gambar_utama)}" alt="" loading="lazy"><span><strong>${escapeHtml(item.nama_kos)}</strong><small>${escapeHtml(item.lokasi_singkat)}</small></span></div></td>
+          <td>${formatPrice(item.harga)}</td>
+          <td><span class="kost-tag">${escapeHtml(item.tipe)}</span></td>
+          <td><div class="row-actions"><button class="row-action" type="button" data-action="edit" data-id="${escapeHtml(item.id)}">Edit</button><button class="row-action is-delete" type="button" data-action="delete" data-id="${escapeHtml(item.id)}">Hapus</button></div></td>
+        </tr>`).join('');
+      document.getElementById('total-listings').textContent = String(listings.length);
+      emptyState.hidden = listings.length > 0;
+      list.closest('table').hidden = listings.length === 0;
+    }
 
     function syncFormImages() {
       form.elements.gambar_utama.value = selectedMainImage;
@@ -193,7 +175,7 @@
         return `
           <article class="admin-image-card ${isCover ? 'is-cover' : ''}">
             <button class="admin-image-select" type="button" data-image-index="${index}" aria-pressed="${isCover}" aria-label="${isCover ? 'Foto sampul' : 'Jadikan foto sampul'}">
-              <img src="${escapeHtml(safeImagePath(image))}" alt="Foto kost ${index + 1}" loading="lazy">
+              <img src="${escapeHtml(image)}" alt="Foto kost ${index + 1}" loading="lazy">
               <span class="cover-label">${isCover ? 'Foto sampul' : 'Pilih sampul'}</span>
             </button>
             <button class="admin-image-remove" type="button" data-remove-index="${index}" aria-label="Hapus foto ${index + 1}">&times;</button>
@@ -201,19 +183,6 @@
       }).join('');
       galleryEmpty.hidden = galleryImages.length > 0;
       syncFormImages();
-    }
-
-    function renderListings() {
-      list.innerHTML = listings.map((item) => `
-        <tr>
-          <td><div class="admin-kost-name"><img src="${escapeHtml(safeImagePath(item.gambar_utama))}" alt="" loading="lazy"><span><strong>${escapeHtml(item.nama_kos)}</strong><small>${escapeHtml(item.lokasi_singkat)}</small></span></div></td>
-          <td>${formatPrice(item.harga)}</td>
-          <td><span class="kost-tag">${escapeHtml(item.tipe)}</span></td>
-          <td><div class="row-actions"><button class="row-action" type="button" data-action="edit" data-id="${escapeHtml(item.id)}">Edit</button><button class="row-action is-delete" type="button" data-action="delete" data-id="${escapeHtml(item.id)}">Hapus</button></div></td>
-        </tr>`).join('');
-      document.getElementById('total-listings').textContent = String(listings.length);
-      emptyState.hidden = listings.length > 0;
-      list.closest('table').hidden = listings.length === 0;
     }
 
     function clearForm() {
@@ -246,38 +215,87 @@
       form.elements.gmaps_url.value = item.gmaps_url;
       form.elements.wa_number.value = item.wa_number;
 
-      const known = [];
+      const knownFacilities = [];
       form.querySelectorAll('input[name="fasilitas"]').forEach((checkbox) => {
         checkbox.checked = item.fasilitas.includes(checkbox.value);
-        if (checkbox.checked) known.push(checkbox.value);
+        if (checkbox.checked) knownFacilities.push(checkbox.value);
       });
-      form.elements.fasilitas_tambahan.value = item.fasilitas.filter((facility) => !known.includes(facility)).join(', ');
+      form.elements.fasilitas_tambahan.value = item.fasilitas.filter((facility) => !knownFacilities.includes(facility)).join(', ');
       editorTitle.textContent = 'Edit data kost';
       document.getElementById('save-kost').textContent = 'Simpan perubahan';
       editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    function saveToBrowser() {
+    async function saveListings(nextListings) {
+      const result = await apiRequest('save', { data: nextListings });
+      if (!result || !Array.isArray(result.data)) throw new Error('Server tidak mengembalikan data kost yang tersimpan.');
+      listings = result.data.map(normalizeListing);
+      renderListings();
+    }
+
+    async function migrateLegacyData() {
+      let oldRecords;
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(listings));
-        currentSource = 'Perubahan browser (localStorage)';
-        sourceLabel.textContent = `Sumber aktif: ${currentSource}. Ekspor JSON untuk mengunduh perubahan.`;
-        renderListings();
-        return true;
+        oldRecords = JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY) || 'null');
       } catch (error) {
-        console.error('Gagal menyimpan data kost ke localStorage:', error);
-        showNotice('Data tidak tersimpan. Penyimpanan browser mungkin penuh; coba gunakan gambar berukuran lebih kecil.', 'error');
-        return false;
+        throw new Error(`Data lama di browser tidak dapat dibaca: ${error.message}`);
+      }
+      if (!Array.isArray(oldRecords) || oldRecords.length === 0) throw new Error('Tidak ada data lama di browser untuk diimpor.');
+
+      const uploadedPaths = new Map();
+      async function convertImage(path) {
+        if (!path.startsWith('data:image/')) return path;
+        if (uploadedPaths.has(path)) return uploadedPaths.get(path);
+        const imageBlob = await fetch(path).then((response) => {
+          if (!response.ok) throw new Error('Foto lama tidak dapat dibaca.');
+          return response.blob();
+        });
+        const serverPath = await uploadImage(new File([imageBlob], 'foto-migrasi.jpg', { type: imageBlob.type || 'image/jpeg' }));
+        uploadedPaths.set(path, serverPath);
+        return serverPath;
+      }
+
+      const migrated = [];
+      for (const rawRecord of oldRecords) {
+        const record = normalizeListing(rawRecord);
+        record.gambar_utama = await convertImage(record.gambar_utama);
+        record.galeri_foto = [...new Set(await Promise.all(record.galeri_foto.map(convertImage)))];
+        if (!record.galeri_foto.includes(record.gambar_utama)) record.galeri_foto.unshift(record.gambar_utama);
+        if (!/^https:\/\//i.test(record.gambar_utama) && !/^assets\/images\//i.test(record.gambar_utama)) {
+          throw new Error(`Path gambar lama untuk "${record.nama_kos}" tidak dikenal dan tidak bisa dimigrasikan.`);
+        }
+        migrated.push(record);
+      }
+      await saveListings(migrated);
+      try {
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      } catch (error) {
+        console.warn('Data lama berhasil dipindahkan tetapi cache lokal tidak dapat dihapus:', error);
+      }
+      importButton.hidden = true;
+      showNotice(`${migrated.length} kost lama berhasil dipindahkan ke server dan kini dapat dilihat di perangkat lain.`, 'success');
+    }
+
+    function checkLegacyData() {
+      try {
+        const saved = localStorage.getItem(LEGACY_STORAGE_KEY);
+        if (!saved) return;
+        const oldData = JSON.parse(saved);
+        if (Array.isArray(oldData) && oldData.length) importButton.hidden = false;
+      } catch (error) {
+        console.error('Data lokal lama tidak valid:', error);
+        showNotice('Data kost lama di browser tidak dapat dibaca. Data server tetap aman.', 'error');
       }
     }
 
-    document.getElementById('admin-logout').addEventListener('click', () => {
+    document.getElementById('admin-logout').addEventListener('click', async () => {
       try {
-        localStorage.removeItem(SESSION_KEY);
+        await apiRequest('logout', {});
       } catch (error) {
-        console.error('Gagal menghapus sesi admin:', error);
+        console.error('Logout server gagal:', error);
+      } finally {
+        window.location.assign('admin-login.html');
       }
-      window.location.assign('admin-login.html');
     });
 
     document.getElementById('new-kost').addEventListener('click', () => {
@@ -285,8 +303,8 @@
       editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
       form.elements.nama_kos.focus();
     });
-    cancelEdit.addEventListener('click', clearForm);
-    cancelForm.addEventListener('click', clearForm);
+    document.getElementById('cancel-edit').addEventListener('click', clearForm);
+    document.getElementById('cancel-form').addEventListener('click', clearForm);
 
     galleryUpload.addEventListener('change', async () => {
       const files = Array.from(galleryUpload.files || []);
@@ -294,23 +312,19 @@
       const uploadButton = document.querySelector('.image-upload-button');
       uploadButton.classList.add('is-loading');
       try {
-        const pendingImages = [];
+        let added = 0;
         for (const file of files) {
-          const imageData = await compressImage(file);
-          if (galleryImages.includes(imageData) || pendingImages.includes(imageData)) continue;
-          pendingImages.push(imageData);
+          const path = await uploadImage(file);
+          if (galleryImages.includes(path)) continue;
+          galleryImages.push(path);
+          if (!selectedMainImage) selectedMainImage = path;
+          added += 1;
+          renderGallery();
         }
-        galleryImages.push(...pendingImages);
-        const added = pendingImages.length;
-        if (!selectedMainImage && galleryImages.length) selectedMainImage = galleryImages[0];
-        renderGallery();
-        showNotice(
-          added ? `${added} foto berhasil ditambahkan ke galeri.` : 'Foto yang dipilih sudah ada di galeri, tidak ditambahkan lagi.',
-          added ? 'success' : 'info'
-        );
+        showNotice(added ? `${added} foto berhasil diunggah ke server dan siap dipakai.` : 'Foto yang sama sudah ada di galeri, tidak ditambahkan lagi.', added ? 'success' : 'info');
       } catch (error) {
         console.error('Gagal mengunggah gambar kost:', error);
-        showNotice(error.message || 'Foto tidak dapat diproses. Silakan pilih file gambar lain.', 'error');
+        showNotice(error.message, 'error');
       } finally {
         uploadButton.classList.remove('is-loading');
         galleryUpload.value = '';
@@ -327,7 +341,6 @@
         renderGallery();
         return;
       }
-
       const selectButton = event.target.closest('button[data-image-index]');
       if (!selectButton) return;
       const index = Number(selectButton.dataset.imageIndex);
@@ -336,7 +349,7 @@
       renderGallery();
     });
 
-    list.addEventListener('click', (event) => {
+    list.addEventListener('click', async (event) => {
       const button = event.target.closest('button[data-action]');
       if (!button) return;
       if (button.dataset.action === 'edit') {
@@ -344,30 +357,30 @@
         return;
       }
       const item = listings.find((listing) => listing.id === button.dataset.id);
-      if (!item) {
-        showNotice('Data kost yang akan dihapus tidak ditemukan.', 'error');
-        return;
+      if (!item || !window.confirm(`Hapus "${item.nama_kos}" dari katalog?`)) return;
+      const nextListings = listings.filter((listing) => listing.id !== item.id);
+      try {
+        await saveListings(nextListings);
+        showNotice(`${item.nama_kos} berhasil dihapus dari database server.`, 'success');
+      } catch (error) {
+        console.error('Gagal menghapus kost:', error);
+        showNotice(`Kost tidak dihapus dari server: ${error.message}`, 'error');
       }
-      if (!window.confirm(`Hapus "${item.nama_kos}" dari katalog?`)) return;
-      const previousListings = listings;
-      listings = listings.filter((listing) => listing.id !== item.id);
-      if (!saveToBrowser()) listings = previousListings;
-      else showNotice(`${item.nama_kos} berhasil dihapus dari data browser.`, 'success');
     });
 
-    form.addEventListener('submit', (event) => {
+    form.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (!form.reportValidity()) return;
+      const saveButton = document.getElementById('save-kost');
       const formData = new FormData(form);
       const existingId = String(formData.get('id') || '');
       const name = String(formData.get('nama_kos') || '').trim();
       const image = selectedMainImage;
-      const description = String(formData.get('deskripsi') || '').trim();
       const mapUrl = String(formData.get('gmaps_url') || '').trim();
       const phone = String(formData.get('wa_number') || '').replace(/\D/g, '');
 
       if (!image || !galleryImages.includes(image)) {
-        showNotice('Pilih minimal satu foto dari galeri dan tentukan foto sampul.', 'error');
+        showNotice('Unggah minimal satu foto dari perangkat dan tentukan foto sampul.', 'error');
         galleryUpload.focus();
         return;
       }
@@ -387,11 +400,8 @@
 
       const facilities = [
         ...formData.getAll('fasilitas').map(String),
-        ...String(formData.get('fasilitas_tambahan') || '').split(',')
-          .map((facility) => facility.trim()).filter(Boolean)
+        ...String(formData.get('fasilitas_tambahan') || '').split(',').map((facility) => facility.trim()).filter(Boolean)
       ].filter((facility, index, items) => items.indexOf(facility) === index);
-      const gallery = [...new Set(galleryImages)];
-
       const listing = {
         id: existingId || createId(),
         nama_kos: name,
@@ -399,37 +409,55 @@
         harga: Number(formData.get('harga')),
         lokasi_singkat: String(formData.get('lokasi_singkat') || '').trim(),
         gambar_utama: image,
-        galeri_foto: gallery,
+        galeri_foto: [...new Set(galleryImages)],
         fasilitas: facilities,
-        deskripsi: description,
+        deskripsi: String(formData.get('deskripsi') || '').trim(),
         gmaps_url: parsedMap.href,
         wa_number: phone
       };
-      const duplicateName = listings.some((item) => item.id !== existingId && item.nama_kos.toLocaleLowerCase('id-ID') === name.toLocaleLowerCase('id-ID'));
-      if (duplicateName) {
+      if (listings.some((item) => item.id !== existingId && item.nama_kos.toLocaleLowerCase('id-ID') === name.toLocaleLowerCase('id-ID'))) {
         showNotice('Nama kost tersebut sudah terdaftar. Gunakan nama yang berbeda.', 'error');
         form.elements.nama_kos.focus();
         return;
       }
-      const previousListings = listings;
-      if (existingId) {
-        listings = listings.map((item) => item.id === existingId ? listing : item);
-      } else {
-        listings = [listing, ...listings];
-      }
 
-      if (!saveToBrowser()) {
-        listings = previousListings;
-        return;
+      const nextListings = existingId
+        ? listings.map((item) => item.id === existingId ? listing : item)
+        : [listing, ...listings];
+      saveButton.disabled = true;
+      try {
+        await saveListings(nextListings);
+        clearForm();
+        showNotice(existingId ? 'Perubahan kost tersimpan di server dan kini sinkron untuk semua perangkat.' : 'Kost baru tersimpan di server dan kini tampil untuk semua perangkat.', 'success');
+      } catch (error) {
+        console.error('Gagal menyimpan kost:', error);
+        showNotice(`Perubahan tidak tersimpan ke server: ${error.message}`, 'error');
+      } finally {
+        saveButton.disabled = false;
       }
-      clearForm();
-      showNotice(existingId ? 'Perubahan data kost berhasil disimpan di browser.' : 'Kost baru berhasil ditambahkan ke browser.', 'success');
     });
 
-    document.getElementById('export-json').addEventListener('click', () => {
+    importButton.addEventListener('click', async () => {
+      if (!window.confirm('Impor seluruh data lama dari browser ini dan mengganti katalog bersama di server? Foto lama juga akan diunggah. Data server yang ada akan diganti.')) return;
+      importButton.disabled = true;
       try {
-        const json = `${JSON.stringify(listings, null, 2)}\n`;
-        const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+        await migrateLegacyData();
+      } catch (error) {
+        console.error('Migrasi data lokal gagal:', error);
+        showNotice(`Data lokal belum berhasil dipindahkan. Data server tidak diganti. ${error.message}`, 'error');
+      } finally {
+        importButton.disabled = false;
+      }
+    });
+
+    document.getElementById('export-json').addEventListener('click', async () => {
+      try {
+        const response = await fetch(API_URL, { credentials: 'same-origin', cache: 'no-store' });
+        const latestData = await response.json();
+        if (!response.ok || !Array.isArray(latestData)) throw new Error('Data terbaru dari server tidak dapat dibaca.');
+        listings = latestData.map(normalizeListing);
+        renderListings();
+        const blob = new Blob([`${JSON.stringify(listings, null, 2)}\n`], { type: 'application/json;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const download = document.createElement('a');
         download.href = url;
@@ -438,10 +466,10 @@
         download.click();
         download.remove();
         window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-        showNotice('File kos.json berhasil diekspor. Ganti data/kos.json dengan file unduhan untuk memperbarui database awal.', 'success');
+        showNotice('Database terbaru berhasil diekspor sebagai kos.json.', 'success');
       } catch (error) {
         console.error('Gagal mengekspor data kost:', error);
-        showNotice('Ekspor JSON gagal. Silakan coba kembali.', 'error');
+        showNotice(`Ekspor JSON gagal: ${error.message}`, 'error');
       }
     });
 
@@ -449,19 +477,6 @@
       const numericIds = listings.map((item) => Number(item.id)).filter(Number.isFinite);
       return String(Math.max(0, ...numericIds) + 1);
     }
-
-    readInitialData().then((data) => {
-      listings = data.listings;
-      currentSource = data.source;
-      sourceLabel.textContent = `Sumber aktif: ${currentSource}.`;
-      renderListings();
-    }).catch((error) => {
-      console.error('Gagal memuat data kost admin:', error);
-      sourceLabel.textContent = 'Data gagal dimuat.';
-      emptyState.hidden = false;
-      list.closest('table').hidden = true;
-      showNotice('Data awal gagal dibaca. Jalankan situs melalui server lokal (contoh: Laragon) dan pastikan data/kos.json tersedia. Detail: ' + error.message, 'error');
-    });
   }
 
   document.addEventListener('DOMContentLoaded', () => {
