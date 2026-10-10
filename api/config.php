@@ -9,7 +9,7 @@ $isLocalHost = in_array($host, ['localhost', '127.0.0.1', '::1'], true)
 
 if ($isLocalHost) {
     $username = $username ?: 'admin';
-    $password = $password ?: 'admin123';
+    $password = $password ?: 'cekkost123';
 } else {
     $username = $username ?: '';
     $password = $password ?: '';
