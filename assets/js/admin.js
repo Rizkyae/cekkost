@@ -34,6 +34,58 @@
     };
   }
 
+  function compressImage(file) {
+    return new Promise((resolve, reject) => {
+      if (!file.type.startsWith('image/')) {
+        reject(new Error(`${file.name} bukan file gambar.`));
+        return;
+      }
+      if (file.size > 15 * 1024 * 1024) {
+        reject(new Error(`${file.name} lebih besar dari batas 15 MB.`));
+        return;
+      }
+
+      const objectUrl = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        const maxDimension = 1440;
+        const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const context = canvas.getContext('2d');
+        if (!context) {
+          reject(new Error(`Browser tidak dapat memproses ${file.name}.`));
+          return;
+        }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error(`Gagal mengolah ${file.name}.`));
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error(`Gagal membaca hasil gambar ${file.name}.`));
+          reader.readAsDataURL(blob);
+        }, 'image/jpeg', 0.78);
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error(`${file.name} tidak dapat dibuka sebagai gambar.`));
+      };
+      image.src = objectUrl;
+    });
+  }
+
+  function safeImagePath(path) {
+    const value = String(path || '').trim();
+    if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value)) return value;
+    if (/^(?:https?:\/\/|\/|\.\/|assets\/images\/)[^\s"'<>]+$/i.test(value)) return value;
+    return DEFAULT_IMAGE;
+  }
+
   function showNotice(message, kind) {
     const notice = document.getElementById('admin-notice');
     if (!notice) return;
@@ -122,13 +174,39 @@
     const emptyState = document.getElementById('admin-empty');
     const cancelEdit = document.getElementById('cancel-edit');
     const cancelForm = document.getElementById('cancel-form');
+    const galleryUpload = document.getElementById('gallery-upload');
+    const galleryPreview = document.getElementById('image-gallery');
+    const galleryEmpty = document.getElementById('image-gallery-empty');
     let listings = [];
     let currentSource = '';
+    let galleryImages = [];
+    let selectedMainImage = '';
+
+    function syncFormImages() {
+      form.elements.gambar_utama.value = selectedMainImage;
+      form.elements.galeri_foto.value = JSON.stringify(galleryImages);
+    }
+
+    function renderGallery() {
+      galleryPreview.innerHTML = galleryImages.map((image, index) => {
+        const isCover = image === selectedMainImage;
+        return `
+          <article class="admin-image-card ${isCover ? 'is-cover' : ''}">
+            <button class="admin-image-select" type="button" data-image-index="${index}" aria-pressed="${isCover}" aria-label="${isCover ? 'Foto sampul' : 'Jadikan foto sampul'}">
+              <img src="${escapeHtml(safeImagePath(image))}" alt="Foto kost ${index + 1}" loading="lazy">
+              <span class="cover-label">${isCover ? 'Foto sampul' : 'Pilih sampul'}</span>
+            </button>
+            <button class="admin-image-remove" type="button" data-remove-index="${index}" aria-label="Hapus foto ${index + 1}">&times;</button>
+          </article>`;
+      }).join('');
+      galleryEmpty.hidden = galleryImages.length > 0;
+      syncFormImages();
+    }
 
     function renderListings() {
       list.innerHTML = listings.map((item) => `
         <tr>
-          <td><div class="admin-kost-name"><img src="${escapeHtml(item.gambar_utama)}" alt="" loading="lazy"><span><strong>${escapeHtml(item.nama_kos)}</strong><small>${escapeHtml(item.lokasi_singkat)}</small></span></div></td>
+          <td><div class="admin-kost-name"><img src="${escapeHtml(safeImagePath(item.gambar_utama))}" alt="" loading="lazy"><span><strong>${escapeHtml(item.nama_kos)}</strong><small>${escapeHtml(item.lokasi_singkat)}</small></span></div></td>
           <td>${formatPrice(item.harga)}</td>
           <td><span class="kost-tag">${escapeHtml(item.tipe)}</span></td>
           <td><div class="row-actions"><button class="row-action" type="button" data-action="edit" data-id="${escapeHtml(item.id)}">Edit</button><button class="row-action is-delete" type="button" data-action="delete" data-id="${escapeHtml(item.id)}">Hapus</button></div></td>
@@ -141,6 +219,10 @@
     function clearForm() {
       form.reset();
       form.elements.id.value = '';
+      galleryImages = [];
+      selectedMainImage = '';
+      galleryUpload.value = '';
+      renderGallery();
       editorTitle.textContent = 'Tambah kost baru';
       document.getElementById('save-kost').textContent = 'Simpan kost';
     }
@@ -157,8 +239,9 @@
       form.elements.tipe.value = item.tipe;
       form.elements.harga.value = item.harga;
       form.elements.lokasi_singkat.value = item.lokasi_singkat;
-      form.elements.gambar_utama.value = item.gambar_utama;
-      form.elements.galeri_foto.value = item.galeri_foto.join(', ');
+      galleryImages = [...new Set([item.gambar_utama, ...item.galeri_foto].filter(Boolean))];
+      selectedMainImage = item.gambar_utama;
+      renderGallery();
       form.elements.deskripsi.value = item.deskripsi;
       form.elements.gmaps_url.value = item.gmaps_url;
       form.elements.wa_number.value = item.wa_number;
@@ -205,6 +288,54 @@
     cancelEdit.addEventListener('click', clearForm);
     cancelForm.addEventListener('click', clearForm);
 
+    galleryUpload.addEventListener('change', async () => {
+      const files = Array.from(galleryUpload.files || []);
+      if (!files.length) return;
+      const uploadButton = document.querySelector('.image-upload-button');
+      uploadButton.classList.add('is-loading');
+      try {
+        const pendingImages = [];
+        for (const file of files) {
+          const imageData = await compressImage(file);
+          if (galleryImages.includes(imageData) || pendingImages.includes(imageData)) continue;
+          pendingImages.push(imageData);
+        }
+        galleryImages.push(...pendingImages);
+        const added = pendingImages.length;
+        if (!selectedMainImage && galleryImages.length) selectedMainImage = galleryImages[0];
+        renderGallery();
+        showNotice(
+          added ? `${added} foto berhasil ditambahkan ke galeri.` : 'Foto yang dipilih sudah ada di galeri, tidak ditambahkan lagi.',
+          added ? 'success' : 'info'
+        );
+      } catch (error) {
+        console.error('Gagal mengunggah gambar kost:', error);
+        showNotice(error.message || 'Foto tidak dapat diproses. Silakan pilih file gambar lain.', 'error');
+      } finally {
+        uploadButton.classList.remove('is-loading');
+        galleryUpload.value = '';
+      }
+    });
+
+    galleryPreview.addEventListener('click', (event) => {
+      const removeButton = event.target.closest('button[data-remove-index]');
+      if (removeButton) {
+        const index = Number(removeButton.dataset.removeIndex);
+        if (!Number.isInteger(index) || index < 0 || index >= galleryImages.length) return;
+        const [removedImage] = galleryImages.splice(index, 1);
+        if (selectedMainImage === removedImage) selectedMainImage = galleryImages[0] || '';
+        renderGallery();
+        return;
+      }
+
+      const selectButton = event.target.closest('button[data-image-index]');
+      if (!selectButton) return;
+      const index = Number(selectButton.dataset.imageIndex);
+      if (!Number.isInteger(index) || index < 0 || index >= galleryImages.length) return;
+      selectedMainImage = galleryImages[index];
+      renderGallery();
+    });
+
     list.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
       if (!button) return;
@@ -230,16 +361,14 @@
       const formData = new FormData(form);
       const existingId = String(formData.get('id') || '');
       const name = String(formData.get('nama_kos') || '').trim();
-      const image = String(formData.get('gambar_utama') || '').trim();
-      const galleryText = String(formData.get('galeri_foto') || '').trim();
+      const image = selectedMainImage;
       const description = String(formData.get('deskripsi') || '').trim();
       const mapUrl = String(formData.get('gmaps_url') || '').trim();
       const phone = String(formData.get('wa_number') || '').replace(/\D/g, '');
-      const imageAllowed = /^(?:https?:\/\/|\/|\.\/|assets\/images\/|data:image\/(?:png|jpe?g|gif|webp);base64,)[^\s"'<>]*$/i.test(image);
 
-      if (!imageAllowed) {
-        showNotice('Path gambar utama harus berupa path lokal, URL http(s), atau data URL gambar.', 'error');
-        form.elements.gambar_utama.focus();
+      if (!image || !galleryImages.includes(image)) {
+        showNotice('Pilih minimal satu foto dari galeri dan tentukan foto sampul.', 'error');
+        galleryUpload.focus();
         return;
       }
       let parsedMap;
@@ -261,10 +390,7 @@
         ...String(formData.get('fasilitas_tambahan') || '').split(',')
           .map((facility) => facility.trim()).filter(Boolean)
       ].filter((facility, index, items) => items.indexOf(facility) === index);
-      const gallery = galleryText
-        ? galleryText.split(',').map((path) => path.trim()).filter(Boolean)
-        : [image];
-      if (!gallery.includes(image)) gallery.unshift(image);
+      const gallery = [...new Set(galleryImages)];
 
       const listing = {
         id: existingId || createId(),
