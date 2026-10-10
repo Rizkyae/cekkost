@@ -2,7 +2,7 @@
   'use strict';
 
   const ADMIN_USERNAME = 'admin';
-  const ADMIN_PASSWORD = 'admin123';
+  const ADMIN_PASSWORD = 'cekkost123';
   const SESSION_KEY = 'cekkos_admin_session_v1';
   const STORAGE_KEY = 'cekkos_kos_data_v1';
   const DATA_URL = 'data/kos.json';
