@@ -25,7 +25,8 @@
     <div id="admin-notice" class="admin-notice" role="status" aria-live="polite" hidden></div>
     <section class="admin-summary" aria-label="Ringkasan data">
       <div><span class="summary-icon" aria-hidden="true">⌂</span><span><strong id="total-listings">0</strong><small>kost terdaftar</small></span></div>
-      <p>Perubahan disimpan di browser ini. Export JSON untuk menyimpan file database terbaru.</p>
+      <p>Perubahan dan foto disimpan di server agar langsung terlihat dari perangkat lain.</p>
+      <button class="button button-outline button-small" type="button" id="import-local-data" hidden>Impor data lama dari perangkat ini</button>
     </section>
     <div class="admin-workspace">
       <section class="admin-panel admin-list-panel">
@@ -76,7 +77,7 @@
         </form>
       </section>
     </div>
-    <p class="admin-security-note"><strong>Catatan:</strong> kredensial admin tersimpan di JavaScript frontend dan data tersimpan per browser. Panel ini cocok untuk prototipe/demo, bukan untuk data sensitif atau penggunaan produksi.</p>
+    <p class="admin-security-note"><strong>Catatan hosting:</strong> gunakan HTTPS, atur variabel lingkungan <code>CEKKOS_ADMIN_USERNAME</code> dan <code>CEKKOS_ADMIN_PASSWORD</code>, serta izinkan PHP menulis ke <code>data/kos.json</code> dan <code>assets/images/uploads/</code>.</p>
   </main>
 </body>
 </html>
