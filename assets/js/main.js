@@ -2,7 +2,7 @@
   'use strict';
 
   const DATA_URL = 'data/kos.json';
-  const STORAGE_KEY = 'cekkos_kos_data_v1';
+  const API_URL = 'api/kos.php';
   const FALLBACK_IMAGE = 'assets/images/kos-1.jpg';
   const FACILITY_ICONS = {
     'AC': '❄',
@@ -64,15 +64,14 @@
   }
 
   async function loadListings() {
-    const savedData = localStorage.getItem(STORAGE_KEY);
-    if (savedData) {
-      try {
-        const parsedData = JSON.parse(savedData);
-        if (!Array.isArray(parsedData)) throw new Error('Data tersimpan bukan array.');
-        return { listings: parsedData.map(normalizeListing), source: 'localStorage' };
-      } catch (error) {
-        console.error('Data kost di localStorage tidak valid:', error);
-      }
+    try {
+      const response = await fetch(API_URL, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`API gagal dibaca (HTTP ${response.status}).`);
+      const parsedData = await response.json();
+      if (!Array.isArray(parsedData)) throw new Error('Format respons API kost harus berupa array.');
+      return { listings: parsedData.map(normalizeListing), source: 'server' };
+    } catch (error) {
+      console.warn('API kost tidak tersedia, memakai database JSON lokal:', error);
     }
 
     const response = await fetch(DATA_URL, { cache: 'no-store' });
